@@ -170,3 +170,38 @@ test('전송 후 API 거절과 평가 검증 실패를 서로 다른 단계로 �
   const invalid = createTutor({ apiKey: 'test-only-key', fetcher: async () => responseOf(data) });
   await assert.rejects(invalid.call(body), e => e.code === 'INVALID_RESPONSE' && e.stage === 'upstream_body' && e.message.includes('인용문이 원문에 존재하지 않습니다'));
 });
+
+test('출력 한도 소진은 추론 토큰 수와 함께 구분하며 불완전 평가는 반영하지 않는다', async () => {
+  const { body, state } = callBody(); const events = []; let calls = 0;
+  const tutor = createTutor({ apiKey: 'test-only-key', onDiagnostic: e => events.push(e), fetcher: async (_url, options) => {
+    calls++;
+    assert.equal(JSON.parse(options.body).max_output_tokens, 20000);
+    // Even parseable partial JSON must not be accepted as a completed evaluation.
+    const result = JSON.parse(await responseOf(demoResponse('evaluate', body.context)).text());
+    return new Response(JSON.stringify({ ...result, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage: { output_tokens: 20000, output_tokens_details: { reasoning_tokens: 17000 } } }));
+  } });
+  await assert.rejects(tutor.call(body), e => e.code === 'INCOMPLETE_TOKENS' && e.stage === 'upstream_body' && e.message.includes('20000') && e.message.includes('17000'));
+  await assert.rejects(tutor.call(body)); assert.equal(calls, 1);
+  const failed = failRequest(state, body.requestId);
+  assert.equal(current(failed).evaluations.length, 0);
+  assert.deepEqual(makeContext(failed).questions, body.context.questions);
+  assert.equal(events.find(e => e.stage === 'upstream_body').incompleteReason, 'max_output_tokens');
+});
+
+test('콘텐츠 필터, API 생성 실패, 알 수 없는 중단을 토큰 부족으로 오인하지 않는다', async () => {
+  for (const [status, reason, expected] of [['incomplete', 'content_filter', 'CONTENT_FILTER'], ['failed', null, 'RESPONSE_FAILED'], ['incomplete', 'private-upstream-details', 'INCOMPLETE']]) {
+    const events = [];
+    const tutor = createTutor({ apiKey: 'test-only-key', onDiagnostic: e => events.push(e), fetcher: async () => new Response(JSON.stringify({ status, incomplete_details: { reason }, output: [], error: { message: 'private-upstream-details' } })) });
+    await assert.rejects(tutor.call(callBody().body), e => e.code === expected && !e.message.includes('private-upstream-details'));
+    assert.equal(JSON.stringify(events).includes('private-upstream-details'), false);
+  }
+});
+
+test('평가 외 질문 요청의 토큰 한도는 늘리지 않는다', async () => {
+  const { body } = callBody(); body.action = 'question';
+  const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async (_url, options) => {
+    assert.equal(JSON.parse(options.body).max_output_tokens, 10000);
+    return responseOf(demoResponse('question', body.context));
+  } });
+  assert.equal((await tutor.call(body)).source, 'live');
+});
