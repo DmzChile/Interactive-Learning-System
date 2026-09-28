@@ -1,5 +1,8 @@
 // Shared by the browser and local backend. Imported data never becomes configuration.
 export const APP_VERSION = '0.1.0';
+// Leave time for the server's structured timeout error to reach the browser.
+export const AI_TIMEOUT_MS = 180_000;
+export const AI_CLIENT_TIMEOUT_MS = AI_TIMEOUT_MS + 15_000;
 export const LIMITS = Object.freeze({ file: 2_000_000, code: 24000, lines: 600, context: 100000, output: 120000 });
 export const CONCEPTS = ['타입과 표현식', '조건문', '반복문', '배열', '함수', '포인터', '메모리와 수명', '입출력'];
 export const LEVELS = ['미평가', '입문', '연습 중', '독립 적용', '응용'];

@@ -1,4 +1,4 @@
-import { APP_VERSION, CONCEPTS, LEVELS, STAGES, LIMITS, current, taskOf, versionOf, questionsOf, evaluationOf, isBusy, emptyState, reduce, beginRequest, failRequest, makeContext, applyResponse, serialize, restore, validate, assert } from './domain.mjs';
+import { APP_VERSION, AI_TIMEOUT_MS, AI_CLIENT_TIMEOUT_MS, CONCEPTS, LEVELS, STAGES, LIMITS, current, taskOf, versionOf, questionsOf, evaluationOf, isBusy, emptyState, reduce, beginRequest, failRequest, makeContext, applyResponse, serialize, restore, validate, assert } from './domain.mjs';
 
 let state = emptyState(), view = 'workspace', dirty = false, consent = false;
 let connection = { configured: false, reachable: false, verified: false, model: 'gpt-5-mini' };
@@ -54,7 +54,7 @@ async function ask(action) {
   if (s.source === 'live') { assert(connection.configured, '서버 시작 시 API 키를 입력해야 합니다.'); assert(consent, 'OpenAI API 전송 안내를 읽고 동의해 주세요.'); }
   const started = beginRequest(state, action); state = started.state; dirty = true; render();
   try {
-    const response = await fetch('/api/tutor', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launchToken}` }, body: JSON.stringify({ requestId: started.requestId, action, context: makeContext(state), consent }), signal: AbortSignal.timeout(70000) });
+    const response = await fetch('/api/tutor', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launchToken}` }, body: JSON.stringify({ requestId: started.requestId, action, context: makeContext(state), consent }), signal: AbortSignal.timeout(AI_CLIENT_TIMEOUT_MS) });
     const payload = await response.json();
     assert(response.ok, payload.message || 'AI 요청을 처리하지 못했습니다.');
     assert(payload.requestId === started.requestId && payload.source === current(state).source, '응답의 요청 또는 모드가 일치하지 않습니다.');
@@ -183,7 +183,7 @@ function mentorView(s) {
   else content = h('div', { class: 'question-list' }, questions.length ? questions.map((q, i) => questionCard(s, q, i)) : h('div', { class: 'mentor-empty' }, h('h3', {}, busy ? '제출본을 살펴보고 있어요' : '설명 질문을 받아 보세요'), h('p', {}, '질문 요청이 실패해도 제출본은 그대로 보존됩니다.'), !busy ? button('질문 다시 요청', () => ask('question'), 'primary') : null),
     questions.length && questions.every(q => q.answer !== null) ? h('div', { class: 'answers-complete' }, small('답변을 모두 기록했습니다. 설명과 코드를 비교해 볼까요?'), button('코드와 설명 평가받기', () => ask('evaluate'), 'primary full', busy), button('추가 질문 받기', () => ask('question'), 'quiet full', busy)) : null);
   return h('aside', { class: 'mentor-panel' }, h('div', { class: 'mentor-heading' }, h('span', { class: 'mentor-icon' }, '✳'), h('div', {}, h('h2', {}, '학습 대화'), small(s.source === 'demo' ? '모의 튜터' : connection.model)), s.versionId ? badge(versionName(s, s.versionId), 'blue') : null),
-    busy ? h('div', { class: 'busy-banner', role: 'status' }, h('span', { class: 'spinner' }), '응답을 기다리고 있습니다…') : null, h('div', { class: 'mentor-content' }, content, ...s.hints.filter(h => h.taskId === s.taskId).map(item => h('details', { class: 'help-card', open: true }, h('summary', {}, item.kind === 'hint' ? '사용한 힌트' : '요청한 전체 해설'), h('p', { class: 'prewrap' }, item.text)))),
+    busy ? h('div', { class: 'busy-banner', role: 'status' }, h('span', { class: 'spinner' }), `코드와 답변을 검토하고 있습니다. 최대 ${AI_TIMEOUT_MS / 60000}분 정도 걸릴 수 있습니다…`) : null, h('div', { class: 'mentor-content' }, content, ...s.hints.filter(h => h.taskId === s.taskId).map(item => h('details', { class: 'help-card', open: true }, h('summary', {}, item.kind === 'hint' ? '사용한 힌트' : '요청한 전체 해설'), h('p', { class: 'prewrap' }, item.text)))),
     h('div', { class: 'mentor-footer' }, button('힌트 요청', () => ask('hint'), 'quiet', busy), button('전체 해설 요청', () => { if (window.confirm('전체 해설을 요청할까요? 도움 사용 이력이 평가에 반영됩니다.')) return ask('explain'); }, 'quiet', busy), small(`도움 이력 ${s.hints.filter(h => h.taskId === s.taskId).length}회 · 전체 정답은 요청할 때만 제공합니다.`)));
 }
 function questionCard(s, q, i) {
