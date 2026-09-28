@@ -11,7 +11,8 @@ function callBody(source = 'live') {
   const start = beginRequest(answered(source), 'evaluate');
   return { state: start.state, body: { requestId: start.requestId, action: 'evaluate', context: makeContext(start.state), consent: true } };
 }
-const responseOf = data => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(data) }] }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const wireData = data => Array.isArray(data.criteria) ? { ...data, criteria: Object.fromEntries(data.criteria.map(({ name, ...criterion }) => [name, criterion])) } : data;
+const responseOf = data => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(wireData(data)) }] }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 test('인증/출처/정적 파일 범위 및 오프라인 평가 API 경로', async t => {
   const { server, token } = createApp(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.close(); server.closeAllConnections(); });
@@ -238,6 +239,38 @@ test('평가 본문과 양쪽 근거가 있는 변경안의 잘못된 인용은 
     const data = realEvaluation(state);
     data[target][0].evidence[0].quote = '원문에 없는 인용';
     const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async () => responseOf(data) });
+    await assert.rejects(tutor.call(body), e => e.code === 'INVALID_RESPONSE');
+  }
+});
+
+test('API 스키마는 7개 평가 항목을 각각 필수로 지정하고 기존 저장 형식으로 변환한다', async () => {
+  const { RUBRIC, applyResponse, serialize, restore } = await import('../public/domain.mjs');
+  const { body, state } = callBody(); const data = demoResponse('evaluate', body.context);
+  const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async (_url, options) => {
+    const schema = JSON.parse(options.body).text.format.schema.properties.criteria;
+    assert.equal(schema.type, 'object');
+    assert.deepEqual(schema.required, RUBRIC);
+    assert.deepEqual(Object.keys(schema.properties), RUBRIC);
+    assert.equal(schema.additionalProperties, false);
+    for (const item of Object.values(schema.properties)) assert.equal(Object.hasOwn(item.properties, 'name'), false);
+    const wire = wireData(data);
+    wire.criteria = Object.fromEntries(Object.entries(wire.criteria).reverse());
+    return responseOf(wire);
+  } });
+  const result = await tutor.call(body);
+  assert.deepEqual(result.data.criteria, data.criteria);
+  const evaluated = applyResponse(state, body.requestId, result.data);
+  assert.deepEqual(restore(serialize(evaluated)).sessions[0].evaluations[0].data.criteria, data.criteria);
+});
+
+test('중복 항목으로 인한 누락과 알 수 없는 평가 항목을 임의로 채우지 않는다', async () => {
+  for (const variant of ['duplicate', 'missing', 'extra']) {
+    const { body } = callBody(); const data = demoResponse('evaluate', body.context);
+    if (variant === 'duplicate') data.criteria[1].name = data.criteria[0].name;
+    const wire = wireData(data); const key = Object.keys(wire.criteria)[0];
+    if (variant === 'missing') delete wire.criteria[key];
+    if (variant === 'extra') wire.criteria['임의 항목'] = wire.criteria[key];
+    const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async () => responseOf(wire) });
     await assert.rejects(tutor.call(body), e => e.code === 'INVALID_RESPONSE');
   }
 });
