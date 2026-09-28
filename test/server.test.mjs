@@ -175,12 +175,12 @@ test('출력 한도 소진은 추론 토큰 수와 함께 구분하며 불완전
   const { body, state } = callBody(); const events = []; let calls = 0;
   const tutor = createTutor({ apiKey: 'test-only-key', onDiagnostic: e => events.push(e), fetcher: async (_url, options) => {
     calls++;
-    assert.equal(JSON.parse(options.body).max_output_tokens, 20000);
+    assert.equal(JSON.parse(options.body).max_output_tokens, 128000);
     // Even parseable partial JSON must not be accepted as a completed evaluation.
     const result = JSON.parse(await responseOf(demoResponse('evaluate', body.context)).text());
-    return new Response(JSON.stringify({ ...result, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage: { output_tokens: 20000, output_tokens_details: { reasoning_tokens: 17000 } } }));
+    return new Response(JSON.stringify({ ...result, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage: { output_tokens: 128000, output_tokens_details: { reasoning_tokens: 117000 } } }));
   } });
-  await assert.rejects(tutor.call(body), e => e.code === 'INCOMPLETE_TOKENS' && e.stage === 'upstream_body' && e.message.includes('20000') && e.message.includes('17000'));
+  await assert.rejects(tutor.call(body), e => e.code === 'INCOMPLETE_TOKENS' && e.stage === 'upstream_body' && e.message.includes('128000') && e.message.includes('117000'));
   await assert.rejects(tutor.call(body)); assert.equal(calls, 1);
   const failed = failRequest(state, body.requestId);
   assert.equal(current(failed).evaluations.length, 0);
@@ -197,10 +197,10 @@ test('콘텐츠 필터, API 생성 실패, 알 수 없는 중단을 토큰 부�
   }
 });
 
-test('평가 외 질문 요청의 토큰 한도는 늘리지 않는다', async () => {
+test('질문 요청도 확대된 32,000토큰 한도로 전송한다', async () => {
   const { body } = callBody(); body.action = 'question';
   const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async (_url, options) => {
-    assert.equal(JSON.parse(options.body).max_output_tokens, 10000);
+    assert.equal(JSON.parse(options.body).max_output_tokens, 32000);
     return responseOf(demoResponse('question', body.context));
   } });
   assert.equal((await tutor.call(body)).source, 'live');

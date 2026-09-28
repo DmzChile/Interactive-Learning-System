@@ -3,7 +3,7 @@ export const APP_VERSION = '0.1.0';
 // Leave time for the server's structured timeout error to reach the browser.
 export const AI_TIMEOUT_MS = 180_000;
 export const AI_CLIENT_TIMEOUT_MS = AI_TIMEOUT_MS + 15_000;
-export const LIMITS = Object.freeze({ file: 2_000_000, code: 24000, lines: 600, context: 100000, output: 120000 });
+export const LIMITS = Object.freeze({ file: 2_000_000, code: 24000, lines: 600, context: 100000, output: 1_000_000 });
 export const CONCEPTS = ['타입과 표현식', '조건문', '반복문', '배열', '함수', '포인터', '메모리와 수명', '입출력'];
 export const LEVELS = ['미평가', '입문', '연습 중', '독립 적용', '응용'];
 export const RUBRIC = ['목표 충족', '논리적 타당성', 'C언어 이해', '의도와 구현의 일치', '설명 능력', '경계 조건 이해', '독립 해결 정도'];
