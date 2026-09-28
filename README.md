@@ -128,3 +128,17 @@ npm run check
 - [GPT-5 Mini model](https://developers.openai.com/api/docs/models/gpt-5-mini)
 
 이 구현은 Responses API의 `text.format` JSON Schema와 `store: false`를 사용합니다. 서버에 대화 ID만 남기는 방식에 의존하지 않고 학습 파일에서 다음 요청의 맥락을 다시 구성합니다. `store: false`를 API 제공자의 모든 데이터 처리·보관이 없다는 의미로 해석해서는 안 됩니다.
+
+### 답변 전송 문제 확인
+
+`답변 기록`은 답변을 학습 상태에 기록합니다. 모든 질문에 답한 뒤 `코드와 설명 평가받기`를 눌러야 코드와 답변이 함께 전송됩니다.
+
+실패하면 화면에 오류 메시지, 확인 단계, 오류 코드, HTTP 상태와 요청 ID가 남습니다. 서버 터미널의 `[tutor]` 기록에서 같은 요청 ID를 확인할 수 있습니다.
+
+- `validated`: 로컬 서버가 요청을 검증함. `answerCount`는 기록된 답변 수입니다.
+- `upstream_request`: 서버에서 OpenAI 호출을 시작함. API가 요청을 수신했다는 확인은 아닙니다.
+- `upstream_headers`: OpenAI의 HTTP 응답 헤더 수신. `status`가 400이면 요청 거절, 401이면 인증 실패 등입니다.
+- `upstream_body`: 응답 본문까지 수신함. 이후 `INVALID_RESPONSE`는 전송 실패가 아니라 응답 형식 또는 근거 검증 실패입니다.
+- `completed`: 결과 검증 완료. `failed`에는 마지막 도달 단계와 오류 코드가 남습니다.
+
+이 진단 로그에는 코드, 답변 본문, API 키, 인증 헤더 또는 API의 원본 오류 본문을 기록하지 않습니다. 학습 상태 JSON의 저장 형식은 변경하지 않습니다.

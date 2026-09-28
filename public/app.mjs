@@ -3,6 +3,8 @@ import { APP_VERSION, AI_TIMEOUT_MS, AI_CLIENT_TIMEOUT_MS, CONCEPTS, LEVELS, STA
 let state = emptyState(), view = 'workspace', dirty = false, consent = false;
 let connection = { configured: false, reachable: false, verified: false, model: 'gpt-5-mini' };
 let toastTimer;
+let requestError = null;
+const requestStages = { local_validation: '요청 전 확인', local_request: '브라우저 → 로컬 서버', local_response: '로컬 서버 응답', validated: '서버에서 답변 확인 완료', upstream_request: '서버 → OpenAI 요청 시작, 응답 헤더 미수신', upstream_headers: 'OpenAI 응답 헤더 수신', upstream_body: 'OpenAI 응답 본문 수신', apply: '화면에 결과 반영' };
 const launchToken = new URLSearchParams(location.hash.slice(1)).get('token') ?? '';
 const app = document.querySelector('#app');
 const h = (tag, attrs = {}, ...children) => {
@@ -50,21 +52,34 @@ async function importJson(file) {
 }
 async function ask(action) {
   const s = current(state);
-  assert(connection.reachable, '서버가 연결되지 않았습니다. 터미널의 접속 주소 전체로 다시 열어 주세요.');
-  if (s.source === 'live') { assert(connection.configured, '서버 시작 시 API 키를 입력해야 합니다.'); assert(consent, 'OpenAI API 전송 안내를 읽고 동의해 주세요.'); }
-  const started = beginRequest(state, action); state = started.state; dirty = true; render();
+  let started, phase = 'local_validation';
+  requestError = null;
   try {
-    const response = await fetch('/api/tutor', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launchToken}` }, body: JSON.stringify({ requestId: started.requestId, action, context: makeContext(state), consent }), signal: AbortSignal.timeout(AI_CLIENT_TIMEOUT_MS) });
-    const payload = await response.json();
-    assert(response.ok, payload.message || 'AI 요청을 처리하지 못했습니다.');
+    assert(connection.reachable, '서버가 연결되지 않았습니다. 터미널의 접속 주소 전체로 다시 열어 주세요.');
+    if (s.source === 'live') { assert(connection.configured, '서버 시작 시 API 키를 입력해야 합니다.'); assert(consent, 'OpenAI API 전송 안내를 읽고 동의해 주세요.'); }
+    started = beginRequest(state, action); state = started.state; dirty = true;
+    const body = JSON.stringify({ requestId: started.requestId, action, context: makeContext(state), consent });
+    render(); phase = 'local_request';
+    const response = await fetch('/api/tutor', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launchToken}` }, body, signal: AbortSignal.timeout(AI_CLIENT_TIMEOUT_MS) });
+    phase = 'local_response';
+    let payload;
+    try { payload = await response.json(); }
+    catch (error) {
+      if (error.name === 'TimeoutError') throw error;
+      throw Object.assign(new Error('서버 응답이 올바른 JSON이 아닙니다. 실행 중인 서버와 접속 주소를 확인하세요.'), { code: 'LOCAL_RESPONSE', status: response.status });
+    }
+    if (!response.ok) throw Object.assign(new Error(payload.message || 'AI 요청을 처리하지 못했습니다.'), { code: payload.code, status: response.status, stage: payload.stage });
+    phase = 'apply';
     assert(payload.requestId === started.requestId && payload.source === current(state).source, '응답의 요청 또는 모드가 일치하지 않습니다.');
     state = applyResponse(state, started.requestId, payload.data); state.settings.model = connection.model;
     if (s.source === 'live') connection.verified = true;
     dirty = true;
     if (action === 'evaluate') notify('제출본과 답변을 바탕으로 평가가 도착했습니다.');
   } catch (error) {
-    state = failRequest(state, started.requestId);
-    notify(error.name === 'TimeoutError' ? '응답을 기다리다 중단했습니다. 코드와 답변은 유지됩니다. 다시 요청할 수 있습니다.' : error.message, true);
+    if (started) state = failRequest(state, started.requestId);
+    const message = error.name === 'TimeoutError' ? '브라우저에서 응답 대기를 중단했습니다. 코드와 답변은 유지됩니다.' : error.message;
+    requestError = { message, stage: error.stage ?? phase, code: error.code ?? (error.name === 'TimeoutError' ? 'CLIENT_TIMEOUT' : phase === 'local_request' ? 'LOCAL_NETWORK' : 'CLIENT_ERROR'), status: error.status, requestId: started?.requestId };
+    notify(message, true);
   } finally { render(); }
 }
 function beginSession(source) { consent = false; commit({ type: 'start', source }); view = 'workspace'; render(); }
@@ -98,6 +113,11 @@ function render() {
   else if (view === 'results') main.append(resultView());
   else if (view === 'history') main.append(historyView());
   else main.append(workspace());
+  if (requestError) main.prepend(h('div', { class: 'notice error-notice', role: 'alert' },
+    h('strong', {}, 'AI 요청을 완료하지 못했습니다'), h('span', {}, requestError.message),
+    small(`확인 단계: ${requestStages[requestError.stage] ?? requestError.stage} · ${requestError.code}${requestError.status ? ` · HTTP ${requestError.status}` : ''}`),
+    requestError.requestId ? small(`요청 ID: ${requestError.requestId}`) : null,
+    button('닫기', () => { requestError = null; render(); }, 'quiet')));
   if (!connection.reachable) main.prepend(h('div', { class: 'notice error-notice' }, h('strong', {}, '로컬 서버 연결을 확인해 주세요.'), h('span', {}, '터미널에 표시된 접속 주소 전체를 다시 열면 모의 학습과 AI 요청을 사용할 수 있습니다. 열린 데이터의 열람·편집·저장은 가능합니다.')));
   app.replaceChildren(h('div', { class: 'shell' }, sidebar, h('div', { class: 'page' }, header, main)));
   updateSaveStatus();
@@ -190,7 +210,7 @@ function questionCard(s, q, i) {
   const busy = isBusy(s);
   const input = h('textarea', { rows: 4, maxlength: 6000, disabled: busy, placeholder: '변수의 값이 어떻게 바뀌는지, 왜 그렇게 작성했는지 설명해 주세요.', value: q.answerDraft, 'aria-label': `질문 ${i + 1}에 대한 설명`, oninput: safe(event => commit({ type: 'answerDraft', id: q.id, answer: event.target.value }, false)) });
   return h('article', { class: 'question-card' }, h('div', { class: 'question-top' }, stamp(`질문 ${String(i + 1).padStart(2, '0')}`), button(`L${q.startLine}–${q.endLine}`, () => showVersion(s, q.versionId, q.startLine, q.endLine), 'line-link')), h('p', { class: 'question-text' }, q.text),
-    q.answer !== null ? h('div', { class: 'answer-bubble' }, h('span', {}, '나의 설명'), h('p', { class: 'prewrap' }, q.answer)) : h('div', {}, input, button('답변 기록', () => commit({ type: 'answer', id: q.id, answer: input.value }), 'outline', busy)));
+    q.answer !== null ? h('div', { class: 'answer-bubble' }, h('span', {}, '나의 설명'), h('p', { class: 'prewrap' }, q.answer)) : h('div', {}, input, button('답변 기록', () => commit({ type: 'answer', id: q.id, answer: input.value }), 'outline', busy), small('답변 기록 후 모든 질문에 답하면 ‘코드와 설명 평가받기’로 AI에 전송합니다.')));
 }
 const verdictClass = verdict => verdict === '충족' ? 'green' : verdict === '미충족' ? 'red' : verdict === '일부 충족' ? 'amber' : 'neutral';
 function evidenceView(s, evidence) {

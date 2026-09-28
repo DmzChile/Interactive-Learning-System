@@ -14,8 +14,8 @@ const ASSETS = new Map([
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/favicon.svg', ['favicon.svg', 'image/svg+xml']]
 ]);
-export function createApp({ apiKey = '', model = 'gpt-5-mini', token = randomBytes(32).toString('hex'), fetcher, timeoutMs } = {}) {
-  const tutor = createTutor({ apiKey, model, fetcher, timeoutMs });
+export function createApp({ apiKey = '', model = 'gpt-5-mini', token = randomBytes(32).toString('hex'), fetcher, timeoutMs, onDiagnostic = event => console.info('[tutor]', JSON.stringify(event)) } = {}) {
+  const tutor = createTutor({ apiKey, model, fetcher, timeoutMs, onDiagnostic });
   function send(res, status, body, type = 'application/json; charset=utf-8') {
     res.writeHead(status, { 'Content-Type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
   }
@@ -53,7 +53,7 @@ export function createApp({ apiKey = '', model = 'gpt-5-mini', token = randomByt
       send(res, 200, await readFile(new URL(asset[0], publicRoot)), asset[1]);
     } catch (error) {
       if (res.headersSent || res.destroyed) return;
-      if (error instanceof ApiError) send(res, error.status, { code: error.code, message: error.message });
+      if (error instanceof ApiError) send(res, error.status, { code: error.code, message: error.message, stage: error.stage ?? 'local_validation' });
       else if (error instanceof ValidationError) send(res, 400, { code: 'VALIDATION', message: error.message });
       else send(res, 500, { code: 'INTERNAL', message: '요청을 처리하지 못했습니다. 현재 작업을 저장해 주세요.' });
       // Never log headers, request payloads, API keys, or raw upstream errors.

@@ -136,3 +136,37 @@ test('사용자 지정 모델에는 기본 모델 전용 추론 옵션을 보내
   } });
   assert.equal((await tutor.call(body)).source, 'live');
 });
+
+test('기록한 한국어 답변을 HTTP 서버에서 OpenAI 요청까지 그대로 전달하고 평가를 반영한다', async t => {
+  const { body, state } = callBody(); const events = []; let outgoing;
+  const { server, token } = createApp({ apiKey: 'private-integration-key', onDiagnostic: event => events.push(event), fetcher: async (_url, options) => {
+    outgoing = JSON.parse(JSON.parse(options.body).input[0].content);
+    return responseOf(demoResponse('evaluate', outgoing.learningData));
+  } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(origin + '/api/tutor', { method: 'POST', headers: { Authorization: `Bearer ${token}`, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal(response.status, 200);
+  assert.equal(outgoing.action, 'evaluate');
+  assert.deepEqual(outgoing.learningData.questions, body.context.questions);
+  assert.ok(outgoing.learningData.questions.every(q => q.answer.includes('초기화')));
+  const payload = await response.json();
+  const { applyResponse } = await import('../public/domain.mjs');
+  const next = applyResponse(state, payload.requestId, payload.data);
+  assert.equal(current(next).stage, 'evaluation');
+  assert.deepEqual(events.map(e => e.stage), ['validated', 'upstream_request', 'upstream_headers', 'upstream_body', 'completed']);
+  assert.equal(events[0].answerCount, body.context.questions.length);
+  const logged = JSON.stringify(events);
+  for (const secret of ['private-integration-key', body.context.version.code, body.context.questions[0].answer]) assert.equal(logged.includes(secret), false);
+});
+
+test('전송 후 API 거절과 평가 검증 실패를 서로 다른 단계로 알린다', async () => {
+  const { body } = callBody();
+  const rejected = createTutor({ apiKey: 'test-only-key', fetcher: async () => new Response('private-upstream-details', { status: 400 }) });
+  await assert.rejects(rejected.call(body), e => e.code === 'API_REQUEST' && e.stage === 'upstream_headers' && e.message.includes('HTTP 400') && !e.message.includes('private-upstream-details'));
+  const data = demoResponse('evaluate', body.context);
+  data.criteria[0].evidence[0].quote = '원문에 없는 인용';
+  const invalid = createTutor({ apiKey: 'test-only-key', fetcher: async () => responseOf(data) });
+  await assert.rejects(invalid.call(body), e => e.code === 'INVALID_RESPONSE' && e.stage === 'upstream_body' && e.message.includes('인용문이 원문에 존재하지 않습니다'));
+});
