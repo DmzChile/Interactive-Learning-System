@@ -1,0 +1,14 @@
+{
+  "name": "interactive-c-learning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local C17 learning workspace with evidence-based AI feedback",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "demo": "node server.mjs --offline",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}
