@@ -74,7 +74,9 @@ async function ask(action) {
     state = applyResponse(state, started.requestId, payload.data); state.settings.model = connection.model;
     if (s.source === 'live') connection.verified = true;
     dirty = true;
-    if (action === 'evaluate') notify('제출본과 답변을 바탕으로 평가가 도착했습니다.');
+    if (action === 'evaluate') notify(payload.omittedProposals > 0
+      ? `평가가 도착했습니다. 코드·답변 근거가 함께 없는 숙련도 변경안 ${payload.omittedProposals}개는 제외했습니다.`
+      : '제출본과 답변을 바탕으로 평가가 도착했습니다.');
   } catch (error) {
     if (started) state = failRequest(state, started.requestId);
     const message = error.name === 'TimeoutError' ? '브라우저에서 응답 대기를 중단했습니다. 코드와 답변은 유지됩니다.' : error.message;

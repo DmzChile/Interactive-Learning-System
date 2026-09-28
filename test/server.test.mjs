@@ -205,3 +205,39 @@ test('질문 요청도 확대된 32,000토큰 한도로 전송한다', async () 
   } });
   assert.equal((await tutor.call(body)).source, 'live');
 });
+
+test('한쪽 근거만 있는 수준 변경안은 제외하고 평가와 유효한 변경안은 보존한다', async () => {
+  const { realEvaluation } = await import('./helpers.mjs');
+  const { applyResponse, reduce } = await import('../public/domain.mjs');
+  for (const kind of ['code', 'answer']) {
+    const { body, state } = callBody(); const events = [];
+    const data = realEvaluation(state);
+    const invalid = structuredClone(data.proposals[0]);
+    invalid.concept = body.context.task.data.concepts[1];
+    const evidence = invalid.evidence.find(e => e.kind === kind);
+    invalid.evidence = [evidence, structuredClone(evidence)];
+    data.proposals.push(invalid);
+    const tutor = createTutor({ apiKey: 'test-only-key', onDiagnostic: e => events.push(e), fetcher: async () => responseOf(data) });
+    const result = await tutor.call(body);
+    assert.equal(result.omittedProposals, 1);
+    assert.deepEqual(result.data.criteria, data.criteria);
+    assert.deepEqual(result.data.proposals, [data.proposals[0]]);
+    assert.equal(events.at(-1).omittedProposals, 1);
+    const evaluated = applyResponse(state, body.requestId, result.data);
+    assert.equal(current(evaluated).stage, 'evaluation');
+    const before = evaluated.profile.estimates.concepts.find(c => c.name === invalid.concept).level;
+    const closed = reduce(evaluated, { type: 'close' });
+    assert.equal(closed.profile.estimates.concepts.find(c => c.name === invalid.concept).level, before);
+  }
+});
+
+test('평가 본문과 양쪽 근거가 있는 변경안의 잘못된 인용은 계속 거부한다', async () => {
+  const { realEvaluation } = await import('./helpers.mjs');
+  for (const target of ['criteria', 'proposals']) {
+    const { body, state } = callBody();
+    const data = realEvaluation(state);
+    data[target][0].evidence[0].quote = '원문에 없는 인용';
+    const tutor = createTutor({ apiKey: 'test-only-key', fetcher: async () => responseOf(data) });
+    await assert.rejects(tutor.call(body), e => e.code === 'INVALID_RESPONSE');
+  }
+});
